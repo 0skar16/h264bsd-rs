@@ -1,0 +1,3 @@
+[submodule "h264bsd-sys/h264bsd"]
+	path = h264bsd-sys/h264bsd
+	url = https://github.com/oneam/h264bsd.git
