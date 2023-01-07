@@ -2,7 +2,13 @@
 name = "h264bsd-sys"
 version = "0.1.0"
 edition = "2021"
-
+authors = ["0skar16"]
+description = "Bindings for h264bsd"
+readme = "../README.md"
+license = "MIT"
+homepage = "https://github.com/0skar16/h264bsd-rs"
+repository = "https://github.com/0skar16/h264bsd-rs"
+keywords = ["video", "multimedia","decoding", "h264", "decoder"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
