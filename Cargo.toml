@@ -14,7 +14,7 @@ keywords = ["video", "multimedia","decoding", "h264", "decoder"]
 [dependencies]
 av-codec = "0.3.0"
 av-data = "0.4.1"
-h264bsd-sys = { path = "h264bsd-sys/", version = "0.1.0" }
+h264bsd-sys = "0.1.0"
 
 [dev-dependencies]
 image = "0.24.5"
