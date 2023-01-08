@@ -2,7 +2,7 @@ use std::{io::Result, io::Error, io::ErrorKind, sync::Arc, time::Instant};
 
 use av_codec::decoder::Decoder as AVDecoder;
 use av_data::{packet::Packet, frame::{ArcFrame, Frame, VideoInfo}, pixel::formats::RGBA};
-use h264bsd_sys::{storage_t, h264bsdAlloc, h264bsdInit, h264bsdDecode, H264BSD_PIC_RDY, H264BSD_ERROR, H264BSD_PARAM_SET_ERROR, H264BSD_RDY, H264BSD_HDRS_RDY, H264BSD_MEMALLOC_ERROR, h264bsdCroppingParams, h264bsdPicWidth, h264bsdPicHeight, h264bsdNextOutputPicture, h264bsdConvertToRGBA};
+use h264bsd_sys::{storage_t, h264bsdAlloc, h264bsdInit, h264bsdDecode, H264BSD_PIC_RDY, H264BSD_ERROR, H264BSD_PARAM_SET_ERROR, H264BSD_RDY, H264BSD_HDRS_RDY, H264BSD_MEMALLOC_ERROR, h264bsdCroppingParams, h264bsdPicWidth, h264bsdPicHeight, h264bsdNextOutputPicture, h264bsdConvertToRGBA, h264bsdShutdown, h264bsdFree};
 #[cfg(test)]
 mod tests;
 pub struct Decoder {
@@ -119,6 +119,14 @@ impl AVDecoder for Decoder {
 }
 unsafe impl Send for Decoder {}
 unsafe impl Sync for Decoder {}
+
+impl Drop for Decoder {
+    fn drop(&mut self) {
+        unsafe {h264bsdShutdown(self.internal);
+        h264bsdFree(self.internal);}
+    }
+}
+
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum H264bsdStatus {
