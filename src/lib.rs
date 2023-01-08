@@ -8,6 +8,9 @@ mod tests;
 pub struct Decoder {
     pub internal: *mut storage_t,
     current_image: Option<Image>,
+    size: (u32, u32),
+    pos: (u32, u32),
+    crop_flag: u32,
 }
 impl Decoder {
     pub fn new() -> Result<Self> {
@@ -20,24 +23,24 @@ impl Decoder {
         Ok(Self {
             internal,
             current_image: None,
+            size: (0,0),
+            pos: (0,0),
+            crop_flag: 0,
         })
     }
-    pub unsafe fn decode(&mut self, data: Vec<u8>) -> Result<Image> {
+    pub unsafe fn decode(&mut self, data: Vec<u8>) -> Result<()> {
         let mut data = data;
-        let mut top = 0;
-        let mut left = 0;
-        let mut width = 0;
-        let mut height = 0;
-        let mut cropping_flag = 0;
         let mut pic_data = vec![].as_mut_ptr();
         let mut pic_id = 0;
         let mut is_idr_pic = 0;
         let mut num_err_mbs = 0;
+        let mut got_img = false;
         while data.len() > 0 {
             let mut read = 0;
             let status = H264bsdStatus::try_from(h264bsdDecode(self.internal, data.as_mut_ptr(), data.len() as u32, 0, &mut read))?;
             match status {
                 H264bsdStatus::PicRdy => {
+                    got_img = true;
                     pic_data = h264bsdNextOutputPicture(self.internal, &mut pic_id, &mut is_idr_pic, &mut num_err_mbs);
                 },
                 H264bsdStatus::Error => Err(Error::new(ErrorKind::Other, "H264 error occured"))?,
@@ -45,10 +48,10 @@ impl Decoder {
                 H264bsdStatus::Rdy => {},
                 H264bsdStatus::MemAllocError => Err(Error::new(ErrorKind::Other, "H264 memory allocation error occured"))?,
                 H264bsdStatus::HdrsRdy => {
-                    h264bsdCroppingParams(self.internal, &mut cropping_flag, &mut left, &mut width, &mut top, &mut height);
-                    if cropping_flag != 0 {
-                        width = h264bsdPicWidth(self.internal) * 16;
-                        height = h264bsdPicHeight(self.internal) * 16;
+                    h264bsdCroppingParams(self.internal, &mut self.crop_flag, &mut self.pos.0, &mut self.size.0, &mut self.pos.1, &mut self.size.1);
+                    if self.crop_flag != 0 {
+                        self.size.0 = h264bsdPicWidth(self.internal) * 16;
+                        self.size.1 = h264bsdPicHeight(self.internal) * 16;
                     }
                 },
             }
@@ -57,13 +60,16 @@ impl Decoder {
                 data = (&mut data[read as usize..]).to_vec();
             }
         }
-        let img = Image{
-            width,
-            height,
-            data: pic_data,
-        };
-        self.current_image = Some(img.clone());
-        Ok(img)
+        if got_img {
+            let img = Image{
+                width: self.size.0,
+                height: self.size.1,
+                data: pic_data,
+            };
+            self.current_image = Some(img.clone());
+        }
+        Ok(())
+        
     }
 }
 impl AVDecoder for Decoder {
