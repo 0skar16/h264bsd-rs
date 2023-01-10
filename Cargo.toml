@@ -1,6 +1,6 @@
 [package]
 name = "h264bsd"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["0skar16"]
 description = "Bindings for h264bsd"
