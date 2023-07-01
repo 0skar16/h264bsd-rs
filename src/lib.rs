@@ -1,19 +1,21 @@
-use std::{io::Result, io::Error, io::ErrorKind, sync::Arc, time::Instant};
+use std::{io::Result, io::Error, io::ErrorKind, sync::Arc};
 
 use av_codec::decoder::Decoder as AVDecoder;
-use av_data::{packet::Packet, frame::{ArcFrame, Frame, VideoInfo}, pixel::formats::RGBA};
-use h264bsd_sys::{storage_t, h264bsdAlloc, h264bsdInit, h264bsdDecode, H264BSD_PIC_RDY, H264BSD_ERROR, H264BSD_PARAM_SET_ERROR, H264BSD_RDY, H264BSD_HDRS_RDY, H264BSD_MEMALLOC_ERROR, h264bsdCroppingParams, h264bsdPicWidth, h264bsdPicHeight, h264bsdNextOutputPicture, h264bsdConvertToRGBA, h264bsdShutdown, h264bsdFree};
+use av_data::{packet::Packet, frame::{ArcFrame, Frame, VideoInfo}, pixel::formats::{RGBA, YUV420}};
+use h264bsd_sys::*;
+pub use h264bsd_sys;
 #[cfg(test)]
 mod tests;
 pub struct Decoder {
     pub internal: *mut storage_t,
-    current_image: Option<Image>,
-    size: (u32, u32),
+    pub current_image: Option<Image>,
+    pub size: (u32, u32),
     pos: (u32, u32),
     crop_flag: u32,
+    output_type: ImageOutput,
 }
 impl Decoder {
-    pub fn new() -> Result<Self> {
+    pub fn new(output_type: ImageOutput) -> Result<Self> {
         let internal = unsafe{ h264bsdAlloc() };
         let status = unsafe { h264bsdInit(internal, 0) };
         if status > 0 {
@@ -26,6 +28,7 @@ impl Decoder {
             size: (0,0),
             pos: (0,0),
             crop_flag: 0,
+            output_type,
         })
     }
     pub unsafe fn decode(&mut self, data: Vec<u8>) -> Result<()> {
@@ -66,7 +69,7 @@ impl Decoder {
                 height: self.size.1,
                 data: pic_data,
             };
-            self.current_image = Some(img.clone());
+            self.current_image = Some(img);
         }
         Ok(())
         
@@ -83,32 +86,51 @@ impl AVDecoder for Decoder {
     }
 
     fn receive_frame(&mut self) -> av_codec::error::Result<ArcFrame> {
-        let start = Instant::now();
-        if let Some(img) = self.current_image.clone() {
+        if let Some(img) = &self.current_image {
             let video = VideoInfo::new(
                 img.width as usize,
                 img.height as usize,
                 false,
                 av_data::frame::FrameType::OTHER,
-                Arc::new(*RGBA),
+                Arc::new(match self.output_type {
+                    ImageOutput::RGBA => *RGBA,
+                    ImageOutput::YUV => *YUV420,
+                }),
             );
             let mut f = Frame::new_default_frame(video, None);
-            let mut rgba: Vec<u32> = vec![0; img.width as usize * img.height as usize];
-            unsafe { h264bsdConvertToRGBA(img.width, img.height, img.data, rgba.as_mut_ptr()) };
-            let mut planes = [vec![], vec![], vec![], vec![]];
-            for pix in rgba {
-                let p = pix.to_le_bytes();
-                planes[0].push(p[0]);
-                planes[1].push(p[1]);
-                planes[2].push(p[2]);
-                planes[3].push(p[3]);
+            match self.output_type {
+                ImageOutput::RGBA =>  {
+                    let mut rgba: Vec<u8> = vec![0; img.width as usize * img.height as usize * 4];
+                    unsafe { h264bsdConvertToRGBA(img.width, img.height, img.data, rgba.as_mut_ptr() as *mut u32) };
+                    let r: Vec<u8> = rgba.clone().into_iter().step_by(4).collect();
+
+                    let mut g = rgba.clone().into_iter();
+                    let _ = g.next();
+                    let g: Vec<u8> = g.step_by(4).collect();
+
+                    let mut b = rgba.clone().into_iter();
+                    let _ = b.next();
+                    let b: Vec<u8> = b.step_by(4).collect();
+
+                    let mut a = rgba.into_iter();
+                    let _ = a.next();
+                    let a: Vec<u8> = a.step_by(4).collect();
+
+                    f.buf.as_mut_slice_inner(0).unwrap().copy_from_slice(&r);
+                    f.buf.as_mut_slice_inner(1).unwrap().copy_from_slice(&g);
+                    f.buf.as_mut_slice_inner(2).unwrap().copy_from_slice(&b);
+                    f.buf.as_mut_slice_inner(3).unwrap().copy_from_slice(&a);
+                },
+                ImageOutput::YUV => {
+                    let len = 2*(img.width*img.height) as usize;
+                    let wh = (img.width*img.height) as usize;
+                    let yuv = unsafe{ Vec::from_raw_parts(img.data, len, len) };
+                    f.buf.as_mut_slice_inner(0).unwrap().copy_from_slice(&yuv[..wh]);
+                    f.buf.as_mut_slice_inner(1).unwrap().copy_from_slice(&yuv[wh..wh+wh/2]);
+                    f.buf.as_mut_slice_inner(2).unwrap().copy_from_slice(&yuv[wh+wh/2..wh*2]);
+                }
             }
-            f.buf.as_mut_slice_inner(0).unwrap().copy_from_slice(&planes[0]);
-            f.buf.as_mut_slice_inner(1).unwrap().copy_from_slice(&planes[1]);
-            f.buf.as_mut_slice_inner(2).unwrap().copy_from_slice(&planes[2]);
-            f.buf.as_mut_slice_inner(3).unwrap().copy_from_slice(&planes[3]);
-            let end = Instant::now();
-            println!("Conversion took: {}ms",(end-start).as_millis());
+            
             Ok(Arc::new(f))
         }else{
             Err(av_codec::error::Error::MoreDataNeeded)
@@ -159,9 +181,16 @@ impl TryFrom<u32> for H264bsdStatus {
     }
 
 }
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Image {
-    width: u32,
-    height: u32,
-    data: *mut u8,
+    pub width: u32,
+    pub height: u32,
+    pub data: *mut u8,
+}
+
+#[derive(Clone, Debug, Copy)]
+pub enum ImageOutput {
+    RGBA,
+    YUV,
+
 }

@@ -8,7 +8,7 @@ use image::{codecs::png::PngEncoder, ImageEncoder};
 #[test]
 pub fn decode_and_save() {
 
-    let mut decoder = Decoder::new().unwrap();
+    let mut decoder = Decoder::new(crate::ImageOutput::RGBA).unwrap();
     let pic = read("test.h264").unwrap();
     let mut pkt = Packet::new();
     pkt.data = pic;
