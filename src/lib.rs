@@ -1,7 +1,7 @@
-use std::{io::Result, io::Error, io::ErrorKind, sync::Arc};
+use std::{io::{Error, ErrorKind, Result}, sync::Arc};
 
 use av_codec::decoder::Decoder as AVDecoder;
-use av_data::{packet::Packet, frame::{ArcFrame, Frame, VideoInfo}, pixel::formats::{RGBA, YUV420}};
+use av_data::{frame::{ArcFrame, Frame, VideoInfo}, packet::Packet, pixel::formats::{RGB24, RGBA, YUV420}};
 use h264bsd_sys::*;
 pub use h264bsd_sys;
 #[cfg(test)]
@@ -95,26 +95,16 @@ impl AVDecoder for Decoder {
                 Arc::new(match self.output_type {
                     ImageOutput::RGBA => *RGBA,
                     ImageOutput::YUV => *YUV420,
+                    ImageOutput::RGB => *RGB24,
                 }),
             );
             let mut f = Frame::new_default_frame(video, None);
             match self.output_type {
                 ImageOutput::RGBA =>  {
-                    let mut rgba: Vec<u8> = vec![0; img.width as usize * img.height as usize * 4];
-                    unsafe { h264bsdConvertToRGBA(img.width, img.height, img.data, rgba.as_mut_ptr() as *mut u32) };
-                    let r: Vec<u8> = rgba.clone().into_iter().step_by(4).collect();
-
-                    let mut g = rgba.clone().into_iter();
-                    let _ = g.next();
-                    let g: Vec<u8> = g.step_by(4).collect();
-
-                    let mut b = rgba.clone().into_iter();
-                    let _ = b.next();
-                    let b: Vec<u8> = b.step_by(4).collect();
-
-                    let mut a = rgba.into_iter();
-                    let _ = a.next();
-                    let a: Vec<u8> = a.step_by(4).collect();
+                    let len = (img.width * img.height * 2) as usize;
+                    let img_data = unsafe{ Vec::from_raw_parts(img.data, len, len) };
+                    let (r, g, b) = convert_to_rgb(img.width as usize, img.height as usize, &img_data);
+                    let a = vec![0xff; (img.width * img.height) as usize];
 
                     f.buf.as_mut_slice_inner(0).unwrap().copy_from_slice(&r);
                     f.buf.as_mut_slice_inner(1).unwrap().copy_from_slice(&g);
@@ -129,6 +119,15 @@ impl AVDecoder for Decoder {
                     f.buf.as_mut_slice_inner(1).unwrap().copy_from_slice(&yuv[wh..wh+wh/2]);
                     f.buf.as_mut_slice_inner(2).unwrap().copy_from_slice(&yuv[wh+wh/2..wh*2]);
                 }
+                ImageOutput::RGB => {
+                    let len = (img.width * img.height * 2) as usize;
+                    let img_data = unsafe{ Vec::from_raw_parts(img.data, len, len) };
+                    let (r, g, b) = convert_to_rgb(img.width as usize, img.height as usize, &img_data);
+
+                    f.buf.as_mut_slice_inner(0).unwrap().copy_from_slice(&r);
+                    f.buf.as_mut_slice_inner(1).unwrap().copy_from_slice(&g);
+                    f.buf.as_mut_slice_inner(2).unwrap().copy_from_slice(&b);
+                },
             }
             
             Ok(Arc::new(f))
@@ -191,6 +190,59 @@ pub struct Image {
 #[derive(Clone, Debug, Copy)]
 pub enum ImageOutput {
     RGBA,
+    RGB,
     YUV,
+}
 
+
+pub fn convert_to_rgb(w: usize, h: usize, data: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let mut x = 0;
+    let mut y = 0;
+    let y_size = w * h;
+    let cb_size = w / 2 * h / 2;
+    let luma = &data[..y_size];
+    let cb = &data[y_size..y_size + cb_size];
+    let cr = &data[y_size + cb_size..];
+
+    let mut r = vec![0u8; w * h];
+    let mut g = vec![0u8; w * h];
+    let mut b = vec![0u8; w * h];
+
+    while y < h {
+        let c = luma[x + y * w] as i32 - 16;
+        let d = cb[x / 2 + y / 2 * w / 2] as i32 - 128;
+        let e = cr[x / 2 + y / 2 * w / 2] as i32 - 128;
+        r[x + y * w] = if (298 * c + 409 * e + 128 >> 8) < 0 {
+            0
+        } else if 298 * c + 409 * e + 128 >> 8 > 255 {
+            255
+        } else {
+            (298 * c + 409 * e + 128 >> 8) as u32
+        } as u8;
+        g[x + y * w] = if (298 * c - 100 * d - 208 * e + 128 >> 8) < 0 {
+            0
+        } else if 298 * c - 100 * d - 208 * e + 128 >> 8 > 255 {
+            255
+        } else {
+            298 * c - 100 * d - 208 * e + 128 >> 8
+        } as u8;
+        b[x + y * w] = if (298 * c + 516 * d + 128 >> 8) < 0 {
+            0
+        } else if 298 * c + 516 * d + 128 >> 8 > 255 {
+            255
+        } else {
+            298 * c + 516 * d + 128 >> 8
+        } as u8;
+
+        x += 1;
+
+        if x < w {
+            continue;
+        }
+
+        x = 0;
+
+        y += 1;
+    }
+    (r, g, b)
 }
