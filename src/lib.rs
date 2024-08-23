@@ -1,7 +1,6 @@
 use std::{
     ffi::c_void,
     io::{Error, ErrorKind, Result},
-    mem::MaybeUninit,
     sync::Arc,
 };
 
