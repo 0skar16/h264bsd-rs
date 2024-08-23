@@ -15,4 +15,4 @@ keywords = ["video", "multimedia","decoding", "h264", "decoder"]
 
 [build-dependencies]
 cc = { version = "1.0", features = ["parallel"] }
-bindgen = "0.63.0"
+bindgen = "0"

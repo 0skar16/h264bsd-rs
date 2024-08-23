@@ -15,7 +15,7 @@ pub fn decode_and_save() {
     let start = Instant::now();
     decoder.send_packet(&pkt).unwrap();
     let end = Instant::now();
-    print!("Decoding took: {}ms", (end-start).as_millis());
+    println!("Decoding took: {}ms", (end-start).as_millis());
     let frame = decoder.receive_frame().unwrap();
     let r = frame.buf.as_slice_inner(0).unwrap();
     let g = frame.buf.as_slice_inner(1).unwrap();
@@ -30,5 +30,5 @@ pub fn decode_and_save() {
         data.push(a[i]);
     }
     let f = fs::File::create("test.png").unwrap();
-    PngEncoder::new(f).write_image(&data, vid.width as u32, vid.height as u32, image::ColorType::Rgba8).unwrap();
+    PngEncoder::new(f).write_image(&data, vid.width as u32, vid.height as u32, image::ExtendedColorType::Rgba8).unwrap();
 }
