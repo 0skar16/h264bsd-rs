@@ -42,7 +42,7 @@ fn main() {
     println!("cargo:rerun-if-changed=data/wrapper.h");
     let bindings = Builder::default()
         .header("data/wrapper.h")
-        .parse_callbacks(Box::new(CargoCallbacks))
+        .parse_callbacks(Box::new(CargoCallbacks::new()))
         .generate()
         .expect("Unable to generate bindings");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
