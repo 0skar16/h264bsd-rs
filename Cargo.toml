@@ -14,6 +14,7 @@ keywords = ["video", "multimedia","decoding", "h264", "decoder"]
 [dependencies]
 av-codec = "0.3"
 av-data = "0.4"
+fast_image_resize = "4.2.1"
 h264bsd-sys = "1.0.1"
 libc = "0.2"
 

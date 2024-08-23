@@ -4,13 +4,14 @@ use av_codec::decoder::Decoder as AVDecoder;
 use av_data::{frame::{ArcFrame, Frame, VideoInfo}, packet::Packet, pixel::formats::{RGB24, RGBA, YUV420}};
 use h264bsd_sys::*;
 pub use h264bsd_sys;
-
+use fast_image_resize::{self as fr, ResizeOptions};
 #[cfg(test)]
 mod tests;
 pub struct Decoder {
     pub internal: storage_t,
     pub current_image: Option<Image>,
     pub size: (u32, u32),
+    pub buffer_size: (u32, u32),
     pos: (u32, u32),
     crop_flag: u32,
     output_type: ImageOutput,
@@ -28,6 +29,7 @@ impl Decoder {
             current_image: None,
             size: (0,0),
             pos: (0,0),
+            buffer_size: (0,0),
             crop_flag: 0,
             output_type,
         })
@@ -57,8 +59,10 @@ impl Decoder {
                 H264bsdStatus::HdrsRdy => {
                     h264bsdCroppingParams(self.internal(), &mut self.crop_flag, &mut self.pos.0, &mut self.size.0, &mut self.pos.1, &mut self.size.1);
                     if self.crop_flag != 0 {
-                        self.size.0 = h264bsdPicWidth(self.internal()) * 16;
-                        self.size.1 = h264bsdPicHeight(self.internal()) * 16;
+                        self.buffer_size.0 = h264bsdPicWidth(self.internal()) * 16;
+                        self.buffer_size.1 = h264bsdPicHeight(self.internal()) * 16;
+                    } else {
+                        self.buffer_size = self.size;
                     }
                 },
             }
@@ -68,11 +72,32 @@ impl Decoder {
             }
         }
         if got_img {
-            let len = (self.size.0 * self.size.1 * 3 / 2) as usize;
+            let buf_len = (self.buffer_size.0 * self.buffer_size.1 * 3 / 2) as usize;
+            let buf = Vec::from_raw_parts(pic_data, buf_len, buf_len);
+            let data_len = (self.size.0 * self.size.1 * 3 / 2) as usize;
+            let mut data = vec![0; data_len];
+
+            let y_len = (
+                (self.buffer_size.0 * self.buffer_size.1) as usize,
+                (self.size.0 * self.size.1) as usize
+            );
+
+            let cb_len = (
+                (self.buffer_size.0 * self.buffer_size.1 / 4) as usize,
+                (self.size.0 * self.size.1 / 4) as usize
+            );
+
+            let cb_buffer_size = (self.buffer_size.0/2, self.buffer_size.1/2);
+            let cb_size = (self.size.0/2, self.size.1/2);
+
+            crop(&buf[..y_len.0], &mut data[..y_len.1], self.size, self.buffer_size);
+            crop(&buf[y_len.0..y_len.0 + cb_len.0], &mut data[y_len.1..y_len.1 + cb_len.1], cb_size, cb_buffer_size);
+            crop(&buf[y_len.0 + cb_len.0..], &mut data[y_len.1 + cb_len.1..], cb_size, cb_buffer_size);
+
             let img = Image{
                 width: self.size.0,
                 height: self.size.1,
-                data: Vec::from_raw_parts(pic_data, len, len).clone(),
+                data,
             };
             self.current_image = Some(img);
         }
@@ -285,4 +310,12 @@ macro_rules! free {
             libc::free($ptr as *mut c_void)
         }
     };
+}
+fn crop(input: &[u8], output: &mut [u8], size: (u32, u32), buffer_size: (u32, u32)) {
+    let src = fr::images::ImageRef::new(buffer_size.0, buffer_size.1, input, fr::PixelType::U8).unwrap();
+    
+    let mut dst = fr::images::Image::from_slice_u8(size.0, size.1, output, fr::PixelType::U8).unwrap();
+
+    let mut resizer = fr::Resizer::new();
+    resizer.resize(&src, &mut dst, &ResizeOptions::new().resize_alg(fr::ResizeAlg::Nearest).crop(0.0, 0.0, size.0 as f64, size.1 as f64)).unwrap();
 }
