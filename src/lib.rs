@@ -1,10 +1,19 @@
-use std::{ffi::c_void, io::{Error, ErrorKind, Result}, mem::MaybeUninit, sync::Arc};
+use std::{
+    ffi::c_void,
+    io::{Error, ErrorKind, Result},
+    mem::MaybeUninit,
+    sync::Arc,
+};
 
 use av_codec::decoder::Decoder as AVDecoder;
-use av_data::{frame::{ArcFrame, Frame, VideoInfo}, packet::Packet, pixel::formats::{RGB24, RGBA, YUV420}};
-use h264bsd_sys::*;
-pub use h264bsd_sys;
+use av_data::{
+    frame::{ArcFrame, Frame, VideoInfo},
+    packet::Packet,
+    pixel::formats::{RGB24, RGBA, YUV420},
+};
 use fast_image_resize::{self as fr, ResizeOptions};
+pub use h264bsd_sys;
+use h264bsd_sys::*;
 #[cfg(test)]
 mod tests;
 pub struct Decoder {
@@ -18,18 +27,21 @@ pub struct Decoder {
 }
 impl Decoder {
     pub fn new(output_type: ImageOutput) -> Result<Self> {
-        let mut internal: storage_t = unsafe{ std::mem::zeroed() };
+        let mut internal: storage_t = unsafe { std::mem::zeroed() };
         let status = unsafe { h264bsdInit(&mut internal, 0) };
         if status > 0 {
-            return Err(Error::new(ErrorKind::Other, "Couldn't initiate h264 decoder!"));
+            return Err(Error::new(
+                ErrorKind::Other,
+                "Couldn't initiate h264 decoder!",
+            ));
         }
 
         Ok(Self {
             internal,
             current_image: None,
-            size: (0,0),
-            pos: (0,0),
-            buffer_size: (0,0),
+            size: (0, 0),
+            pos: (0, 0),
+            buffer_size: (0, 0),
             crop_flag: 0,
             output_type,
         })
@@ -46,25 +58,48 @@ impl Decoder {
         let mut got_img = false;
         while data.len() > 0 {
             let mut read = 0;
-            let status = H264bsdStatus::try_from(h264bsdDecode(self.internal(), data.as_mut_ptr(), data.len() as u32, 0, &mut read))?;
+            let status = H264bsdStatus::try_from(h264bsdDecode(
+                self.internal(),
+                data.as_mut_ptr(),
+                data.len() as u32,
+                0,
+                &mut read,
+            ))?;
             match status {
                 H264bsdStatus::PicRdy => {
                     got_img = true;
-                    pic_data = h264bsdNextOutputPicture(self.internal(), &mut pic_id, &mut is_idr_pic, &mut num_err_mbs);
-                },
+                    pic_data = h264bsdNextOutputPicture(
+                        self.internal(),
+                        &mut pic_id,
+                        &mut is_idr_pic,
+                        &mut num_err_mbs,
+                    );
+                }
                 H264bsdStatus::Error => Err(Error::new(ErrorKind::Other, "H264 error occured"))?,
-                H264bsdStatus::ParamSetError => Err(Error::new(ErrorKind::Other, "H264 param set error occured"))?,
-                H264bsdStatus::Rdy => {},
-                H264bsdStatus::MemAllocError => Err(Error::new(ErrorKind::Other, "H264 memory allocation error occured"))?,
+                H264bsdStatus::ParamSetError => {
+                    Err(Error::new(ErrorKind::Other, "H264 param set error occured"))?
+                }
+                H264bsdStatus::Rdy => {}
+                H264bsdStatus::MemAllocError => Err(Error::new(
+                    ErrorKind::Other,
+                    "H264 memory allocation error occured",
+                ))?,
                 H264bsdStatus::HdrsRdy => {
-                    h264bsdCroppingParams(self.internal(), &mut self.crop_flag, &mut self.pos.0, &mut self.size.0, &mut self.pos.1, &mut self.size.1);
+                    h264bsdCroppingParams(
+                        self.internal(),
+                        &mut self.crop_flag,
+                        &mut self.pos.0,
+                        &mut self.size.0,
+                        &mut self.pos.1,
+                        &mut self.size.1,
+                    );
                     if self.crop_flag != 0 {
                         self.buffer_size.0 = h264bsdPicWidth(self.internal()) * 16;
                         self.buffer_size.1 = h264bsdPicHeight(self.internal()) * 16;
                     } else {
                         self.buffer_size = self.size;
                     }
-                },
+                }
             }
             //len -= read as usize;
             if read > 0 {
@@ -79,22 +114,37 @@ impl Decoder {
 
             let y_len = (
                 (self.buffer_size.0 * self.buffer_size.1) as usize,
-                (self.size.0 * self.size.1) as usize
+                (self.size.0 * self.size.1) as usize,
             );
 
             let cb_len = (
                 (self.buffer_size.0 * self.buffer_size.1 / 4) as usize,
-                (self.size.0 * self.size.1 / 4) as usize
+                (self.size.0 * self.size.1 / 4) as usize,
             );
 
-            let cb_buffer_size = (self.buffer_size.0/2, self.buffer_size.1/2);
-            let cb_size = (self.size.0/2, self.size.1/2);
+            let cb_buffer_size = (self.buffer_size.0 / 2, self.buffer_size.1 / 2);
+            let cb_size = (self.size.0 / 2, self.size.1 / 2);
 
-            crop(&buf[..y_len.0], &mut data[..y_len.1], self.size, self.buffer_size);
-            crop(&buf[y_len.0..y_len.0 + cb_len.0], &mut data[y_len.1..y_len.1 + cb_len.1], cb_size, cb_buffer_size);
-            crop(&buf[y_len.0 + cb_len.0..], &mut data[y_len.1 + cb_len.1..], cb_size, cb_buffer_size);
+            crop(
+                &buf[..y_len.0],
+                &mut data[..y_len.1],
+                self.size,
+                self.buffer_size,
+            );
+            crop(
+                &buf[y_len.0..y_len.0 + cb_len.0],
+                &mut data[y_len.1..y_len.1 + cb_len.1],
+                cb_size,
+                cb_buffer_size,
+            );
+            crop(
+                &buf[y_len.0 + cb_len.0..],
+                &mut data[y_len.1 + cb_len.1..],
+                cb_size,
+                cb_buffer_size,
+            );
 
-            let img = Image{
+            let img = Image {
                 width: self.size.0,
                 height: self.size.1,
                 data,
@@ -102,16 +152,16 @@ impl Decoder {
             self.current_image = Some(img);
         }
         Ok(())
-        
     }
 }
 impl AVDecoder for Decoder {
-    fn set_extradata(&mut self, _: &[u8]) {
-        
-    }
+    fn set_extradata(&mut self, _: &[u8]) {}
 
     fn send_packet(&mut self, pkt: &Packet) -> av_codec::error::Result<()> {
-        unsafe { self.decode(pkt.data.clone()).map_err(|_| av_codec::error::Error::InvalidData)? };
+        unsafe {
+            self.decode(pkt.data.clone())
+                .map_err(|_| av_codec::error::Error::InvalidData)?
+        };
         Ok(())
     }
 
@@ -130,32 +180,43 @@ impl AVDecoder for Decoder {
             );
             let mut f = Frame::new_default_frame(video, None);
             match self.output_type {
-                ImageOutput::RGBA =>  {
-                    let (r, g, b) = convert_to_rgb(img.width as usize, img.height as usize, &img.data);
+                ImageOutput::RGBA => {
+                    let (r, g, b) =
+                        convert_to_rgb(img.width as usize, img.height as usize, &img.data);
                     let a = vec![0xff; (img.width * img.height) as usize];
 
                     f.buf.as_mut_slice_inner(0).unwrap().copy_from_slice(&r);
                     f.buf.as_mut_slice_inner(1).unwrap().copy_from_slice(&g);
                     f.buf.as_mut_slice_inner(2).unwrap().copy_from_slice(&b);
                     f.buf.as_mut_slice_inner(3).unwrap().copy_from_slice(&a);
-                },
+                }
                 ImageOutput::YUV => {
-                    let wh = (img.width*img.height) as usize;
-                    f.buf.as_mut_slice_inner(0).unwrap().copy_from_slice(&img.data[..wh]);
-                    f.buf.as_mut_slice_inner(1).unwrap().copy_from_slice(&img.data[wh..wh+wh/2]);
-                    f.buf.as_mut_slice_inner(2).unwrap().copy_from_slice(&img.data[wh+wh/2..wh*2]);
+                    let wh = (img.width * img.height) as usize;
+                    f.buf
+                        .as_mut_slice_inner(0)
+                        .unwrap()
+                        .copy_from_slice(&img.data[..wh]);
+                    f.buf
+                        .as_mut_slice_inner(1)
+                        .unwrap()
+                        .copy_from_slice(&img.data[wh..wh + wh / 2]);
+                    f.buf
+                        .as_mut_slice_inner(2)
+                        .unwrap()
+                        .copy_from_slice(&img.data[wh + wh / 2..wh * 2]);
                 }
                 ImageOutput::RGB => {
-                    let (r, g, b) = convert_to_rgb(img.width as usize, img.height as usize, &img.data);
+                    let (r, g, b) =
+                        convert_to_rgb(img.width as usize, img.height as usize, &img.data);
 
                     f.buf.as_mut_slice_inner(0).unwrap().copy_from_slice(&r);
                     f.buf.as_mut_slice_inner(1).unwrap().copy_from_slice(&g);
                     f.buf.as_mut_slice_inner(2).unwrap().copy_from_slice(&b);
-                },
+                }
             }
-            
+
             Ok(Arc::new(f))
-        }else{
+        } else {
             Err(av_codec::error::Error::MoreDataNeeded)
         }
     }
@@ -235,7 +296,6 @@ impl TryFrom<u32> for H264bsdStatus {
             _ => Err(Error::new(ErrorKind::Other, "Wrong status!")),
         }
     }
-
 }
 #[derive(Debug, Clone)]
 pub struct Image {
@@ -250,7 +310,6 @@ pub enum ImageOutput {
     RGB,
     YUV,
 }
-
 
 pub fn convert_to_rgb(w: usize, h: usize, data: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let mut x = 0;
@@ -312,10 +371,20 @@ macro_rules! free {
     };
 }
 fn crop(input: &[u8], output: &mut [u8], size: (u32, u32), buffer_size: (u32, u32)) {
-    let src = fr::images::ImageRef::new(buffer_size.0, buffer_size.1, input, fr::PixelType::U8).unwrap();
-    
-    let mut dst = fr::images::Image::from_slice_u8(size.0, size.1, output, fr::PixelType::U8).unwrap();
+    let src =
+        fr::images::ImageRef::new(buffer_size.0, buffer_size.1, input, fr::PixelType::U8).unwrap();
+
+    let mut dst =
+        fr::images::Image::from_slice_u8(size.0, size.1, output, fr::PixelType::U8).unwrap();
 
     let mut resizer = fr::Resizer::new();
-    resizer.resize(&src, &mut dst, &ResizeOptions::new().resize_alg(fr::ResizeAlg::Nearest).crop(0.0, 0.0, size.0 as f64, size.1 as f64)).unwrap();
+    resizer
+        .resize(
+            &src,
+            &mut dst,
+            &ResizeOptions::new()
+                .resize_alg(fr::ResizeAlg::Nearest)
+                .crop(0.0, 0.0, size.0 as f64, size.1 as f64),
+        )
+        .unwrap();
 }
